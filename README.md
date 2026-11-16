@@ -4,7 +4,15 @@ A Rygar-style vertical climbing action game in a single self-contained HTML file
 
 **Play:** https://unaimedplayer2025-afk.github.io/ryorb-rift-of-ages/ · **Attract mode:** add `?demo`
 
-RyOrb, a scarred cyborg warrior with a red mechanical arm and leg, climbs a tower that tears between a neon synthwave 1985 arcade city and a ruined, burning machine war zone in 2098. Hunt the 5 time portals, smash hunter drones and chrome sentinel units with your spinning spiked disc-shield on a chain, and destroy the OMEGA SENTINEL at the summit.
+RyOrb, a scarred cyborg warrior with a red mechanical arm and leg, climbs a tower that tears between a neon synthwave 1985 arcade city and a ruined, burning machine war zone in 2098. Hunt the 5 time portals with your spinning spiked disc-shield on a chain, and destroy the OMEGA SENTINEL at the summit.
+
+## Enemies (era-specific)
+
+![1985](screenshot-1985.png) ![2098](screenshot.png)
+
+- **1985** (neon rim-lit, synthwave): **Neon Punks** (mohawks, studded leather, shoulder spikes; brawl and lob bottles, some swing boomboxes), **Vice Mercs** (mullets, pastel suits with rolled sleeves, shades; pop out from behind crates with pistols or SMG bursts), **VHS Ninjas** (fast, front-flip, dash-slash, throw shuriken).
+- **2098** (machines only): **Hunter Drones** (flying gunships with searchlights) and **Sentinel Units** (chrome endoskeletons with red eyes).
+- Enemies from the other era are ripped out of the timeline when you warp. Types live in one `ENEMY_TYPES` registry, with `ERA_ROSTER` listing which appear in each era.
 
 ## Controls
 - Arrows / WASD: move, Up/Down climb chains and cables

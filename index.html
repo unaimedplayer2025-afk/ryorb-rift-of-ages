@@ -39,7 +39,8 @@ window.TITLE_THEME_URL = 'title-theme.ogg'; window.TITLE_THEME_FALLBACK_URL = 't
    Rygar-style vertical climber. RyOrb, a scarred cyborg warrior with a
    spinning spiked disc-shield, climbs a tower that keeps tearing between
    a neon 1985 arcade city and a burning, machine-ruled 2098. Hunt the
-   time portals, smash hunter drones and chrome sentinels, and topple the
+   time portals; brawl neon punks, Vice mercs and VHS ninjas in 1985,
+   smash hunter drones and chrome sentinels in 2098, and topple the
    OMEGA SENTINEL at the summit. All art is procedural pixel art.
    Sections: 1 config/helpers, 2 audio, 3 input + autopilot,
              4 level + backgrounds, 5 game logic, 6 rendering, 7 loop
@@ -189,7 +190,13 @@ const SFX = {
   roar()   { Snd.noise(1.3, 0.45, 600, 'lowpass', 80); Snd.tone(55, 1.3, 'sawtooth', 0.22, 30); Snd.tone(880, 1.0, 'square', 0.04, 110); },
   die()    { Snd.tone(330, 0.9, 'sawtooth', 0.18, 40); Snd.noise(0.5, 0.35, 700, 'lowpass', 100); },
   quip()   { Snd.tone(440, 0.04, 'square', 0.04); Snd.tone(330, 0.05, 'square', 0.04, 0, 0.05); },
-  start()  { Snd.tone(110, 0.6, 'sawtooth', 0.12, 55); Snd.noise(0.5, 0.3, 500); }
+  start()  { Snd.tone(110, 0.6, 'sawtooth', 0.12, 55); Snd.noise(0.5, 0.3, 500); },
+  toss()   { Snd.noise(0.12, 0.12, 2400, 'bandpass', 700); },
+  gun()    { Snd.noise(0.07, 0.3, 2200, 'lowpass', 300); Snd.tone(160, 0.06, 'square', 0.06, 60); },
+  star()   { Snd.tone(2400, 0.08, 'triangle', 0.04, 1200); Snd.noise(0.06, 0.08, 6000, 'highpass'); },
+  shatter(){ Snd.noise(0.18, 0.2, 5000, 'highpass'); Snd.tone(2600, 0.05, 'square', 0.03, 1800); },
+  dash()   { Snd.noise(0.16, 0.14, 1800, 'bandpass', 4000); },
+  ko()     { Snd.tone(180, 0.18, 'square', 0.1, 60); Snd.noise(0.14, 0.25, 1200); Snd.tone(880, 0.12, 'square', 0.05, 1320, 0.05); }
 };
 
 // ---------- 3. INPUT ----------
@@ -249,7 +256,7 @@ const LEVEL = (() => {
   // time portals sit on route ledges, evenly spread up the climb (odd count => you arrive at the summit in 2098)
   const ledges = route.filter(n => n.t === 'plat' && n.p.kind === 'ledge').map(n => n.p), portals = [];
   const NP = 5; for (let k = 1; k <= NP; k++) { const p = ledges[Math.round(k * ledges.length / (NP + 1))]; portals.push({ x: p.x + p.w / 2, y: p.y - 14, plat: p, used: false }); }
-  const waves = [{ y: HGT - 240, list: ['sentinel', 'drone'] }, { y: 1000, list: ['drone', 'drone', 'sentinel'] }, { y: 650, list: ['sentinel', 'sentinel', 'drone'] }, { y: 380, list: ['drone', 'sentinel', 'drone'] }];
+  const waves = [{ y: HGT - 240, list: ['walker', 'flyer'] }, { y: 1000, list: ['flyer', 'flyer', 'walker'] }, { y: 650, list: ['walker', 'walker', 'flyer'] }, { y: 380, list: ['flyer', 'walker', 'flyer'] }];   // slots, not types: see ERA_ROSTER
   return { h: HGT, TOP_Y, L, R, plats, ropes, route, portals, waves };
 })();
 function supportAt(x, y) { for (const p of LEVEL.plats) if (Math.abs(p.y - y) < 0.5 && x >= p.x && x <= p.x + p.w) return p; return null; }
@@ -323,13 +330,18 @@ const STARS = (() => { const r = seeded(11), a = []; for (let i = 0; i < 60; i++
 let titleArmed = false, titleArmT = 0;   // titleArmed: audio has been enabled by a first input
 let mode = 'title', titleT = 0, paused = false, G = null, P = null;
 const cam = { y: 0 };
-const NAMES = { drone: 'HUNTER DRONE', sentinel: 'SENTINEL UNIT' };
+
+function eraLines(k) { return (G && LINES[k + G.era]) || LINES[k]; }
 const LINES = {
-  start:   ['THE RIFT IS UP THERE. SO AM I, SOON.', 'CLIMB. BREAK MACHINES. REPEAT.'],
+  start:   ['THE RIFT IS UP THERE. SO AM I, SOON.', 'CLIMB. FIND THE PORTALS. REPEAT.'],
   to2098:  ['2098. THE MACHINES WON. NOT FOR LONG.', 'SMELLS LIKE BURNT CHROME.', 'WHAT A DUMP. LET\'S CLEAN IT.'],
   to1985:  ['1985. NEON AND SYNTHS. I COULD GET USED TO THIS.', 'ARCADES! FOCUS, RyOrb.', 'BACK IN THE GOOD OLD DAYS.'],
-  kill:    ['SCRAP.', 'BACK TO THE FOUNDRY.', 'CHROME BREAKS TOO.', 'THE DISC DECIDES.', 'NEXT.'],
-  hurt:    ['THAT ALL YOU GOT?', 'ARGH!', 'TOUGHER THAN YOU, TIN MAN.'],
+  // era-specific quips: key + era (e.g. kill1985) wins over the plain key
+  kill:    ['THE DISC DECIDES.', 'NEXT.'],
+  kill1985:['STAY IN SCHOOL.', 'GAME OVER, PAL.', 'NEXT.', 'THE DISC DECIDES.'],
+  kill2098:['SCRAP.', 'BACK TO THE FOUNDRY.', 'CHROME BREAKS TOO.', 'THE DISC DECIDES.', 'NEXT.'],
+  hurt:    ['THAT ALL YOU GOT?', 'ARGH!'],
+  hurt2098:['THAT ALL YOU GOT?', 'ARGH!', 'TOUGHER THAN YOU, TIN MAN.'],
   respawn: ['RyOrb DOES NOT STAY DOWN.', 'AGAIN.'],
   boss:    ['TARGET ACQUIRED: RyOrb. SURVIVAL ODDS: 0.0%', 'YOUR ERA HAS ENDED.', 'RESISTANCE IS STATISTICALLY IRRELEVANT.', 'DEPLOYING HUNTERS.'],
   bossHurt:['DAMAGE: ACCEPTABLE.', 'RECALCULATING...', 'ERROR. ERROR.']
@@ -356,7 +368,7 @@ const heroBox = () => [P.x - 7, P.y - 32, 14, 32];
 // --- time travel ---
 function warpTo(era, why) {
   G.era = era; G.warpT = 45; G.shake = 6; SFX.warp();
-  G.shots.length = 0;
+  G.shots.length = 0; purgeOtherEra();
   for (let i = 0; i < 40; i++) G.parts.push({ x: P.x, y: P.y - 16, vx: rnd(-3, 3), vy: rnd(-3, 3), life: rnd(20, 40), c: era === 2098 ? pick(['#ff2a1a', '#ff8a40', '#fff']) : pick(NEON), s: 2, spark: true });
   showMsg(why || ('YEAR ' + era), 120);
   say('hero', pick(era === 2098 ? LINES.to2098 : LINES.to1985), 130);
@@ -434,7 +446,7 @@ function hurtPlayer(srcX) {
   P.inv = 90; P.hurtT = 16; P.atk = 0; P.climb = null; P.grabCD = 20;
   const dir = P.x < srcX ? -1 : 1; P.vx = dir * 2; P.vy = -3; P.onGround = false;
   G.shake = 6; G.hitstop = 4; sparks(P.x, P.y - 18, 10, ['#ff2a1a', '#ff8a40', '#fff']); SFX.hurt();
-  if (G.quipCD <= 0) { say('hero', pick(LINES.hurt)); G.quipCD = 220; }
+  if (G.quipCD <= 0) { say('hero', pick(eraLines('hurt'))); G.quipCD = 220; }
   if (P.hp <= 0) killPlayer(false);
 }
 function killPlayer(fell) {
@@ -451,65 +463,141 @@ function loseLife() {
   say('hero', pick(LINES.respawn), 120);
 }
 
-// --- enemies: HUNTER DRONES (flying gunships) and SENTINEL UNITS (chrome endoskeletons that time-jump in) ---
+// --- ENEMIES: era-specific registry ---------------------------------------------------------------
+// Every enemy type is one entry in ENEMY_TYPES; ERA_ROSTER says which types may appear in each era.
+//   ai: 'flyer' = hovers near the hero and shoots | 'walker' = ledge-bound; `behave(e,dx,dy)` overrides the default walker brain
+//   slot: which wave slot it fills ('walker' | 'flyer'); spawn: 'edge' | 'ledge'; arrive: 'timejump' (2098) | 'glitch' (1985)
+// 2098 = machines only (hunter drones + chrome sentinels). 1985 = three original 80s archetypes with neon rim light.
+const ENEMY_TYPES = {
+  drone:    { era: 2098, name: 'HUNTER DRONE', ai: 'flyer', slot: 'flyer', spawn: 'edge',  hp: 2, w: 24, h: 10, score: 200, fire: [80, 130], refire: [110, 160], boom: 1, draw: (e, t) => drawDrone(e, t) },
+  sentinel: { era: 2098, name: 'SENTINEL UNIT', ai: 'walker', slot: 'walker', spawn: 'ledge', hp: 3, w: 12, h: 27, score: 300, speed: [0.4, 0.6], shoots: true, fire: [60, 120], refire: [110, 170], arrive: 'timejump', boom: 0.8, draw: (e, t) => drawSentinel(e, t) },
+  // 1985: neon punk brawlers (bottle throwers; some lug boomboxes and swing them)
+  punk85:   { era: 1985, name: 'NEON PUNK', ai: 'walker', slot: 'walker', spawn: 'ledge', hp: 2, w: 12, h: 26, score: 150, speed: [0.6, 0.85], fire: [50, 110], refire: [120, 180], arrive: 'glitch',
+              init: e => { e.boombox = Math.random() < 0.35; e.hair = pick(['#ff2ad4', '#39ff6a', '#2af0ff', '#ffe23a']); if (e.boombox) e.name = 'BOOMBOX PUNK'; }, behave: (e, dx, dy) => AI85.punk(e, dx, dy), draw: (e, t) => drawPunk(e, t) },
+  // 1985: mullet mercenaries in pastel suits, firing pistols/SMGs from behind neon-trimmed crates
+  merc85:   { era: 1985, name: 'VICE MERC', ai: 'walker', slot: 'walker', spawn: 'ledge', hp: 3, w: 12, h: 26, score: 250, speed: [0.3, 0.4], fire: [40, 80], refire: [70, 120], arrive: 'glitch',
+              init: e => { e.gun = Math.random() < 0.45 ? 'smg' : 'pistol'; e.suit = pick([['#ff9ad8', '#d870b0'], ['#8ae8f0', '#5ab0c0'], ['#f4eedc', '#c8c0a8'], ['#c8a8ff', '#9a7ad8']]); e.hair = pick(['#e8c060', '#7a4a2a', '#c89040']); },
+              behave: (e, dx, dy) => AI85.merc(e, dx, dy), draw: (e, t) => drawMerc(e, t) },
+  // 1985: VHS action-movie ninjas: fast, flip and dash, throw shuriken (they fill the agile 'flyer' slot in 1985)
+  ninja85:  { era: 1985, name: 'VHS NINJA', ai: 'walker', slot: 'flyer', spawn: 'ledge', hp: 2, w: 11, h: 24, score: 250, speed: [1.1, 1.4], fire: [40, 90], refire: [90, 140], arrive: 'glitch',
+              init: e => { e.band = pick(['#ff2a5a', '#ff2ad4', '#2af0ff']); e.spin = 0; }, behave: (e, dx, dy) => AI85.ninja(e, dx, dy), draw: (e, t) => drawNinja(e, t) },
+};
+const ERA_ROSTER = { 1985: ['punk85', 'merc85', 'ninja85'], 2098: ['drone', 'sentinel'] };
+function enemyTypeFor(slot, era) {   // resolve a wave slot ('walker'/'flyer'/'any') to a concrete type for this era
+  const roster = ERA_ROSTER[era] || [];
+  const match = roster.filter(k => slot === 'any' || (ENEMY_TYPES[k].slot || ENEMY_TYPES[k].ai) === slot);
+  return pick(match.length ? match : roster);   // e.g. 1985 has no flyer yet, so it falls back to its walker
+}
 function makeEnemy(type, x, y) {
-  const e = { type, x, y, vx: 0, vy: 0, flash: 0, t: 0, face: x < P.x ? 1 : -1, onGround: false, dead: false, knock: 0 };
-  if (type === 'drone') Object.assign(e, { hp: 2, w: 24, h: 10, fireT: rnd(80, 130), score: 200, side: x < W / 2 ? -1 : 1 });
-  if (type === 'sentinel') Object.assign(e, { hp: 3, w: 12, h: 27, speed: rnd(0.4, 0.6), fireT: rnd(60, 120), score: 300, state: 'arrive', arriveT: 34 });
+  const d = ENEMY_TYPES[type];
+  const e = { type, def: d, era: d.era, x, y, vx: 0, vy: 0, flash: 0, t: 0, face: x < P.x ? 1 : -1, onGround: false, dead: false, knock: 0,
+    hp: d.hp, w: d.w, h: d.h, score: d.score, fireT: d.fire ? rnd(...d.fire) : 0 };
+  if (d.ai === 'flyer') e.side = x < W / 2 ? -1 : 1;
+  if (d.ai === 'walker') Object.assign(e, { speed: rnd(...d.speed), state: d.arrive ? 'arrive' : 'walk', arriveT: 34, st: 0, cool: 30 });
+  if (d.init) d.init(e);
   G.enemies.push(e); return e;
 }
-function spawn(type) {
-  const { L, R } = LEVEL;
-  if (type === 'drone') { const left = Math.random() < 0.5; return makeEnemy('drone', left ? -20 : W + 20, Math.max(cam.y + 24, P.y - rnd(50, 90))); }
+function spawn(slot) {
+  const { L, R } = LEVEL, type = enemyTypeFor(slot, G.era); if (!type) return null;
+  const d = ENEMY_TYPES[type];
+  if (d.spawn === 'edge') { const left = Math.random() < 0.5; return makeEnemy(type, left ? -20 : W + 20, Math.max(cam.y + 24, P.y - rnd(50, 90))); }
   const cands = LEVEL.plats.filter(p => p.y > cam.y + 40 && p.y < cam.y + H - 10 && p.y < P.y - 10 && p.kind === 'ledge');
-  if (!cands.length) return makeEnemy('drone', Math.random() < 0.5 ? -20 : W + 20, P.y - 70);
-  const p = pick(cands), e = makeEnemy('sentinel', clamp(p.x + p.w / 2 + rnd(-10, 10), L + 10, R - 10), p.y);
+  if (!cands.length) { const alt = (ERA_ROSTER[G.era] || []).find(k => ENEMY_TYPES[k].spawn === 'edge'); return alt ? makeEnemy(alt, Math.random() < 0.5 ? -20 : W + 20, P.y - 70) : null; }
+  const p = pick(cands), e = makeEnemy(type, clamp(p.x + p.w / 2 + rnd(-10, 10), L + 10, R - 10), p.y);
   e.onGround = true; SFX.bubble(); return e;
+}
+function purgeOtherEra() {   // on a time warp, enemies from the other era are ripped out of the timeline
+  for (const e of G.enemies) if (e.era !== G.era) { e.dead = true; sparks(e.x, e.y - e.h / 2, 8, G.era === 2098 ? NEON : ['#9ad8ff', '#ffffff', '#ff2a1a']); }
+  G.enemies = G.enemies.filter(e => !e.dead);
 }
 function updateSpawner() {
   if (G.boss || G.bossDone) return;
   for (const w of LEVEL.waves) if (!G.wavesDone[w.y] && P.y < w.y) { G.wavesDone[w.y] = 1; w.list.forEach(spawn); }
-  if (--G.spawnT <= 0) { G.spawnT = rnd(120, 190); if (G.enemies.length < 4) spawn(Math.random() < 0.5 ? 'drone' : 'sentinel'); }
+  if (--G.spawnT <= 0) { G.spawnT = rnd(120, 190); if (G.enemies.length < 4) spawn(Math.random() < 0.5 ? 'flyer' : 'walker'); }
 }
-function fire(x, y, tx, ty, spd, col = '#ff2a1a') { const d = Math.hypot(tx - x, ty - y) || 1; G.shots.push({ x, y, vx: (tx - x) / d * spd, vy: (ty - y) / d * spd, col, life: 220 }); SFX.laser(); }
+function fire(x, y, tx, ty, spd, col = '#ff2a1a', kind = 'laser') { const d = Math.hypot(tx - x, ty - y) || 1; G.shots.push({ x, y, vx: (tx - x) / d * spd, vy: (ty - y) / d * spd, col, kind, rot: 0, life: 220 }); (kind === 'bullet' ? SFX.gun : kind === 'shuriken' ? SFX.star : SFX.laser)(); }
+function lob(x, y, vx, vy, kind) { G.shots.push({ x, y, vx, vy, g: 0.15, col: '#3ac85a', kind, rot: 0, life: 200 }); SFX.toss(); }
+const setS = (e, s, n) => { e.state = s; e.st = n; };
+const AI85 = {
+  punk(e, dx, dy) {   // brawls up close (lunging swing / boombox swing), lobs bottles at range
+    const adx = Math.abs(dx), ady = Math.abs(dy);
+    if (e.state === 'swing') { e.vx = e.st > 8 ? e.face * 2.2 : e.vx * 0.7; if (--e.st <= 0) setS(e, 'walk', 0); return; }
+    if (e.state === 'throw') { e.vx = 0; if (--e.st === 0) { lob(e.x + e.face * 4, e.y - 28, clamp(dx / 40, -3, 3), -3.6, 'bottle'); setS(e, 'walk', 0); e.fireT = rnd(...e.def.refire); } return; }
+    if (!e.onGround) return;
+    if (ady < 12) e.face = Math.sign(dx) || 1;
+    e.vx = e.face * e.speed * (e.boombox ? 0.75 : 1);
+    if (!supportAt(e.x + e.face * 7, e.y)) { e.face *= -1; e.vx = e.face * e.speed; }
+    if (Math.round(e.t) % 20 === 0) SFX.step();
+    if (e.boombox && e.t % 12 === 0) G.parts.push({ x: e.x - e.face * 7, y: e.y - 32, vx: rnd(-0.4, 0.4), vy: -0.6, life: 40, c: pick(NEON), s: 2, spark: true });
+    if (ady < 12 && adx < 30 && e.cool <= 0) { setS(e, 'swing', 16); e.cool = 55; SFX.swing(); }
+    else if (!e.boombox && ady < 70 && adx > 36 && adx < 150 && --e.fireT <= 0) setS(e, 'throw', 18);
+  },
+  merc(e, dx, dy) {   // digs in behind a crate, pops up to shoot (pistol: single shot, SMG: 3-round burst)
+    if (!e.onGround) return;
+    e.face = Math.sign(dx) || 1; e.vx = 0;
+    if (e.state === 'walk') { setS(e, 'cover', 30 + (Math.random() * 40 | 0)); }
+    if (e.state === 'cover') { e.h = 19; if (--e.st <= 0) { if (Math.abs(dy) < 100 && Math.abs(dx) < 240 && !P.dead) { setS(e, 'aim', 16); e.h = 26; } else e.st = 20; } return; }
+    if (e.state === 'aim') { e.h = 26; if (--e.st <= 0) setS(e, 'shoot', e.gun === 'smg' ? 17 : 1); return; }
+    if (e.state === 'shoot') {
+      if (e.gun === 'smg' ? e.st % 6 === 5 : true) { fire(e.x + e.face * 15, e.y - 20, P.x, P.y - 16 + rnd(-6, 6), e.gun === 'smg' ? 3.4 : 3.0, '#ffe23a', 'bullet'); e.mf = 3; }
+      if (--e.st <= 0) setS(e, 'cover', rnd(...e.def.refire) | 0); return;
+    }
+  },
+  ninja(e, dx, dy) {   // fast patrol, dash-slash along ledges, front flips, shuriken
+    const adx = Math.abs(dx), ady = Math.abs(dy);
+    if (e.state === 'dash') { e.vx = e.face * 4.2; if (--e.st <= 0 || !supportAt(e.x + e.face * 6, e.y)) { e.vx = 0; setS(e, 'walk', 0); } return; }
+    if (!e.onGround) { e.spin += 0.38; return; }
+    e.spin = 0;
+    if (e.state === 'throw') { e.vx = 0; if (--e.st === 0) fire(e.x + e.face * 8, e.y - 18, P.x, P.y - 16, 3.0, '#e8eef4', 'shuriken'); if (e.st <= -8) setS(e, 'walk', 0); return; }
+    if (ady < 40) e.face = Math.sign(dx) || 1;
+    e.vx = e.face * e.speed;
+    if (!supportAt(e.x + e.face * 7, e.y)) { e.face *= -1; e.vx = e.face * e.speed; }
+    if (e.cool > 0) return;
+    if (ady < 10 && adx > 20 && adx < 110) { setS(e, 'dash', 16); e.cool = 75; SFX.dash(); }
+    else if (adx < 180 && ady < 90 && --e.fireT <= 0) { setS(e, 'throw', 10); e.fireT = rnd(...e.def.refire); }
+    else if (Math.random() < 0.012) { e.vy = -4.8; e.vx = e.face * 1.4; e.onGround = false; e.cool = 45; SFX.jump(); }
+  },
+};
 function updateEnemies() {
   for (const e of G.enemies) {
     e.t++; if (e.flash > 0) e.flash--;
     const dx = P.x - e.x, dy = P.y - e.y;
-    if (e.type === 'drone') {
+    if (e.def.ai === 'flyer') {
       const tx = clamp(P.x + (e.x < P.x ? -1 : 1) * 80, 30, W - 30), ty = P.y - 64 + Math.sin(e.t * 0.05) * 8;
       e.vx = (e.vx + (tx - e.x) * 0.004) * 0.95; e.vy = (e.vy + (ty - e.y) * 0.004) * 0.95; e.x += e.vx; e.y += e.vy;
       e.face = Math.sign(dx) || 1;
-      if (--e.fireT <= 0 && !P.dead && e.y > cam.y) { fire(e.x + e.face * 10, e.y - 2, P.x, P.y - 16, 2.3); e.fireT = rnd(110, 160); }
+      if (--e.fireT <= 0 && !P.dead && e.y > cam.y) { fire(e.x + e.face * 10, e.y - 2, P.x, P.y - 16, 2.3); e.fireT = rnd(...e.def.refire); }
     } else {
-      if (e.state === 'arrive') { if (--e.arriveT <= 0) { e.state = 'walk'; sparks(e.x, e.y - 14, 12, ['#9ad8ff', '#ffffff', '#ff2a1a']); } }
+      if (e.state === 'arrive') { if (--e.arriveT <= 0) { e.state = 'walk'; sparks(e.x, e.y - 14, 12, e.era === 1985 ? NEON : ['#9ad8ff', '#ffffff', '#ff2a1a']); } }
       else {
         const py = e.y; e.vy = Math.min(e.vy + 0.3, 6); e.x += e.vx; e.y += e.vy; landing(e, py);
+        if (e.cool > 0) e.cool--; if (e.mf > 0) e.mf--;
         if (e.knock > 0) { e.knock--; if (e.onGround) e.vx *= 0.85; }
-        else if (e.state === 'aim') { e.vx = 0; if (--e.aimT <= 0) { fire(e.x + e.face * 6, e.y - 23, e.x + e.face * 100, e.y - 23, 3); e.state = 'walk'; e.fireT = rnd(110, 170); } }
+        else if (e.def.behave) e.def.behave(e, dx, dy);
+        else if (e.state === 'aim') { e.vx = 0; if (--e.aimT <= 0) { fire(e.x + e.face * 6, e.y - 23, e.x + e.face * 100, e.y - 23, 3); e.state = 'walk'; e.fireT = rnd(...e.def.refire); } }
         else if (e.onGround) {
           if (Math.abs(dy) < 8) e.face = Math.sign(dx) || 1;
           e.vx = e.face * e.speed;
           if (!supportAt(e.x + e.face * 7, e.y)) { e.face *= -1; e.vx = e.face * e.speed; }
           if (Math.round(e.t) % 22 === 0) SFX.step();
-          if (Math.abs(dy) < 10 && Math.abs(dx) < 150 && --e.fireT <= 0) { e.face = Math.sign(dx) || 1; e.state = 'aim'; e.aimT = 22; }
+          if (e.def.shoots && Math.abs(dy) < 10 && Math.abs(dx) < 150 && --e.fireT <= 0) { e.face = Math.sign(dx) || 1; e.state = 'aim'; e.aimT = 22; }
         }
       }
       e.x = clamp(e.x, LEVEL.L + 6, LEVEL.R - 6);
     }
     if (e.y > cam.y + H + 50) e.dead = true;
-    if (!P.dead && e.state !== 'arrive' && overlap(e.x - e.w / 2 + 2, e.y - e.h, e.w - 4, e.h, ...heroBox())) { if (P.inv === 0 && e.type === 'sentinel') { e.vx = -Math.sign(dx || 1) * 2; e.knock = 12; } hurtPlayer(e.x); }
+    if (!P.dead && e.state !== 'arrive' && overlap(e.x - e.w / 2 + 2, e.y - e.h, e.w - 4, e.h, ...heroBox())) { if (P.inv === 0 && e.def.ai === 'walker') { e.vx = -Math.sign(dx || 1) * 2; e.knock = 12; } hurtPlayer(e.x); }
   }
   G.enemies = G.enemies.filter(e => !e.dead);
 }
 function damageEnemy(e, dmg, dir) {
   e.hp -= dmg; e.flash = 6; G.hitstop = 3; G.shake = Math.max(G.shake, 2.5);
   sparks(e.x, e.y - e.h / 2, 10); SFX.hit();
-  if (e.type === 'sentinel') { e.vx = dir * 2.4; e.vy = -2; e.knock = 12; if (e.state === 'aim') e.state = 'walk'; } else { e.vx += dir * 2; }
+  if (e.def.ai === 'walker') { e.vx = dir * 2.4; e.vy = -2; e.knock = 12; e.onGround = false; if (e.state !== 'arrive') { e.state = 'walk'; e.st = 0; if (e.type === 'merc85') e.h = 26; } } else { e.vx += dir * 2; }
   if (e.hp <= 0) {
-    e.dead = true; G.score += e.score; explode(e.x, e.y - e.h / 2, e.type === 'drone' ? 1 : 0.8);
-    pop(e.x, e.y - e.h - 6, NAMES[e.type] + ' +' + e.score, '#ffffff');
-    if (G.quipCD <= 0 && Math.random() < 0.5) { say('hero', pick(LINES.kill)); G.quipCD = 240; }
+    e.dead = true; G.score += e.score; if (e.era === 1985) knockout(e); else explode(e.x, e.y - e.h / 2, e.def.boom);
+    pop(e.x, e.y - e.h - 6, (e.name || e.def.name) + ' +' + e.score, '#ffffff');
+    if (G.quipCD <= 0 && Math.random() < 0.5) { say('hero', pick(eraLines('kill'))); G.quipCD = 240; }
   }
 }
 
@@ -548,8 +636,8 @@ function damageBoss(dmg) {
 }
 function updateShots() {
   for (const s of G.shots) {
-    s.x += s.vx; s.y += s.vy; if (--s.life <= 0 || s.x < -10 || s.x > W + 10 || s.y > cam.y + H + 10 || s.y < cam.y - 20) s.dead = true;
-    if (!s.dead && !P.dead && overlap(s.x - 2, s.y - 2, 4, 4, ...heroBox())) { s.dead = true; hurtPlayer(s.x); }
+    s.vy += s.g || 0; s.x += s.vx; s.y += s.vy; s.rot += s.kind === 'shuriken' ? 0.5 : 0.25; if (--s.life <= 0 || s.x < -10 || s.x > W + 10 || s.y > cam.y + H + 10 || s.y < cam.y - 20) s.dead = true;
+    if (!s.dead && !P.dead && overlap(s.x - 2, s.y - 2, 4, 4, ...heroBox())) { s.dead = true; if (s.kind === 'bottle') { SFX.shatter(); sparks(s.x, s.y, 8, ['#3ac85a', '#bfffd0', '#ffffff']); } hurtPlayer(s.x); }
   }
   G.shots = G.shots.filter(s => !s.dead);
 }
@@ -557,6 +645,13 @@ function updateShots() {
 // --- particles: sparks, chrome shards, smoke, explosions ---
 function sparks(x, y, n, cols = SPARKS) { for (let i = 0; i < n; i++) G.parts.push({ x, y, vx: rnd(-3, 3), vy: rnd(-3.5, 1), life: rnd(12, 30), c: pick(cols), s: 1, spark: true }); }
 function dust(x, y, n) { for (let i = 0; i < n; i++) G.parts.push({ x: x + rnd(-10, 10), y: y - 1, vx: rnd(-1.2, 1.2), vy: rnd(-1.2, -0.2), life: 22, c: G.era === 2098 ? '#5a5a60' : '#7a5aa0', s: 2, dust: true }); }
+function knockout(e) {   // 1985 defeat: neon burst + comic-book KO (no chrome debris, these are humans)
+  const x = e.x, y = e.y - e.h / 2;
+  G.flashes.push({ x, y, r: 10, t: 0 }); sparks(x, y, 18, NEON); G.shake = Math.max(G.shake, 3);
+  for (let i = 0; i < 4; i++) G.parts.push({ x: x + rnd(-4, 4), y: y + rnd(-4, 4), vx: rnd(-0.4, 0.4), vy: rnd(-0.9, -0.3), life: rnd(30, 50), c: '#3a2a4a', s: 3, smoke: true });
+  if (e.boombox) for (let i = 0; i < 5; i++) G.parts.push({ x, y, vx: rnd(-2.5, 2.5), vy: rnd(-4, -1.5), life: rnd(120, 180), c: pick(['#2a2a34', '#2af0ff', '#5a5a6a']), s: 2, chunk: true });
+  SFX.ko(); pop(x, y - 12, pick(['POW!', 'WHAM!', 'K.O.!', 'BOOM!']), pick(NEON), 2);
+}
 function explode(x, y, size = 1, extra) {
   G.flashes.push({ x, y, r: 14 * size, t: 0 });
   sparks(x, y, 22 * size); if (extra) sparks(x, y, 10, extra);
@@ -804,6 +899,91 @@ function drawSentinel(e, t) {   // chrome endoskeleton-style robot with glowing 
     glow(x + f, y - 26, e.state === 'aim' ? 12 : 7, 'rgba(255,30,20,A)', e.state === 'aim' ? 0.8 : 0.45);
   }
 }
+// Neon rim light for 1985 enemies: magenta on the left edge, cyan on the right, behind the shared outline.
+function rimParts(x, y, f, list, fl) {
+  if (!fl) for (const p of list) { const rx = f > 0 ? x + p[0] : x - p[0] - p[2];
+    ctx.fillStyle = '#ff2ad4'; ctx.fillRect(rx - 2, y + p[1], p[2] + 2, p[3]); ctx.fillStyle = '#2af0ff'; ctx.fillRect(rx, y + p[1], p[2] + 2, p[3]); }
+  parts(x, y, f, list, fl);
+}
+function glitchIn(e, x, y) {   // 1985 arrival: stacked neon scanlines resolving into the enemy
+  const k = 1 - e.arriveT / 34;
+  for (let i = 0; i < 7; i++) if (Math.random() < 0.3 + k * 0.7) rect(x - 7 + Math.round(rnd(-4, 4) * (1 - k)), y - 3 - i * 4, 14, 2, pick(NEON));
+  glow(x, y - 13, 18, 'rgba(255,42,212,A)', 0.4);
+}
+function drawPunk(e, t) {   // neon punk: mohawk, studded leather jacket, shoulder spikes, ripped jeans; maybe a boombox
+  const x = Math.round(e.x), y = sy(e.y), f = e.face, fl = e.flash > 0;
+  if (e.state === 'arrive') return glitchIn(e, x, y);
+  const s = e.onGround && e.state === 'walk' ? Math.round(Math.sin(e.t * 0.3) * 2) : 0, J = '#1c1a24', SK = '#d89070', D = '#3a4a78';
+  const swing = e.state === 'swing' && e.st > 4, wind = e.state === 'throw';
+  const L = [[-4 + s, -10, 3, 8, D], [1 - s, -10, 3, 8, D], [-5 + s, -3, 4, 3, '#141418'], [1 - s, -3, 5, 3, '#141418'],
+    [-5, -20, 10, 11, J], [-7, -19, 3, 8, J], [-6, -23, 1, 3, '#c8d0d8'], [5, -23, 1, 3, '#c8d0d8'], [-3, -27, 7, 7, SK], [-1, -31, 3, 4, e.hair], [0, -33, 2, 2, e.hair]];
+  if (swing) L.push(e.boombox ? [4, -22, 12, 3, J] : [4, -19, 9, 3, J], e.boombox ? [12, -27, 10, 7, '#2a2a34'] : [12, -19, 3, 3, SK]);
+  else if (wind) L.push([4, -29, 3, 9, J], [5, -33, 2, 4, '#3ac85a']);
+  else L.push([4, -19, 3, 8, J], [4, -12, 3, 2, SK]);
+  if (e.boombox && !swing) L.push([-12, -31, 10, 7, '#2a2a34'], [-10, -33, 6, 1, '#5a5a6a']);
+  rimParts(x, y, f, L, fl);
+  if (!fl) {
+    const pulse = (t >> 3) % 2 ? '#2af0ff' : '#ff2ad4';
+    detail(x, y, f, [[-1, -20, 2, 10, '#e8e8f0'], [-4, -20, 1, 1, '#e8eef4'], [-2, -20, 1, 1, '#e8eef4'], [2, -20, 1, 1, '#e8eef4'], [-5, -16, 1, 1, '#e8eef4'],
+      [1, -25, 1, 1, '#1a0a0a'], [3, -25, 1, 1, '#1a0a0a'], [1, -22, 3, 1, '#7a3a2a'], [-4 + s, -6, 2, 1, SK], [2 - s, -8, 2, 1, SK],
+      ...(e.boombox && !swing ? [[-11, -29, 3, 3, pulse], [-6, -29, 3, 3, pulse], [-8, -30, 2, 1, '#ffe23a']] : []),
+      ...(swing && e.boombox ? [[13, -25, 3, 3, pulse], [18, -25, 3, 3, pulse]] : [])]);
+    glow(x - f * 2, y - 31, 7, 'rgba(255,42,212,A)', 0.35);
+  }
+}
+function drawMerc(e, t) {   // mullet mercenary: pastel suit, rolled sleeves, tee, shades, pistol or SMG, behind a neon crate
+  const x = Math.round(e.x), y = sy(e.y), f = e.face, fl = e.flash > 0;
+  if (e.state === 'arrive') return glitchIn(e, x, y);
+  const [S1, S2] = e.suit, SK = '#e0a07a', HR = e.hair, low = e.state === 'cover' ? 7 : 0, up = e.state === 'aim' || e.state === 'shoot';
+  const s = e.onGround && e.state === 'walk' ? Math.round(Math.sin(e.t * 0.25) * 2) : 0;
+  const L = low ? [[-5, -6, 4, 4, S2], [1, -6, 5, 4, S2], [-6, -2, 5, 2, '#f0f0f0'], [1, -2, 5, 2, '#f0f0f0']]
+                : [[-4 + s, -10, 3, 8, S2], [1 - s, -10, 3, 8, S2], [-5 + s, -2, 4, 2, '#f0f0f0'], [1 - s, -2, 5, 2, '#f0f0f0']];
+  const o = low;   // upper body drops when crouched
+  L.push([-5, -20 + o, 10, 11, S1], [-7, -19 + o, 3, 5, S1], [-7, -14 + o, 3, 3, SK], [-3, -27 + o, 7, 7, SK], [-4, -29 + o, 8, 3, HR], [-5, -27 + o, 3, 8, HR]);
+  if (up) L.push([3, -19, 5, 3, S1], [8, -19, 4, 3, SK], ...(e.gun === 'smg' ? [[10, -21, 9, 3, '#24242c'], [13, -18, 2, 3, '#24242c']] : [[11, -21, 5, 2, '#24242c'], [11, -19, 2, 2, '#24242c']]));
+  else L.push([4, -19 + o, 3, 5, S1], [4, -14 + o, 3, 3, SK]);
+  rimParts(x, y, f, L, fl);
+  if (!fl) {
+    detail(x, y, f, [[-1, -20 + o, 3, 9, '#ffffff'], [-5, -20 + o, 2, 1, S2], [3, -20 + o, 2, 1, S2], [-7, -15 + o, 3, 1, S2], [0, -25 + o, 5, 1, '#0a0a10'], [3, -25 + o, 1, 1, '#2af0ff'], [1, -22 + o, 3, 1, '#a0604a'],
+      ...(up ? [[8, -19, 1, 3, S2]] : [[4, -15 + o, 3, 1, S2]])]);
+    if (e.mf > 0) { const mx = x + f * (e.gun === 'smg' ? 20 : 17); glow(mx, y - 20, 8, 'rgba(255,226,58,A)', 0.8); rect(mx - 1, y - 21, 3, 3, '#fff6c0'); }
+  }
+  // cover crate (always between the merc and the hero)
+  const cx = f > 0 ? x + 7 : x - 19;
+  rect(cx - 1, y - 13, 14, 14, C.out); rect(cx, y - 12, 12, 12, '#3a2440'); rect(cx, y - 12, 12, 1, '#ff2ad4'); rect(cx, y - 1, 12, 1, '#2af0ff');
+  line(cx + 1, y - 11, cx + 10, y - 2, '#5a3a62'); line(cx + 10, y - 11, cx + 1, y - 2, '#5a3a62');
+}
+function drawNinja(e, t) {   // VHS ninja: dark gi, neon headband + sash tails, eye slit; tucked flip in the air, afterimages on a dash
+  const x = Math.round(e.x), y = sy(e.y), f = e.face, fl = e.flash > 0;
+  if (e.state === 'arrive') return glitchIn(e, x, y);
+  const G1 = '#16162a', G2 = '#2a2a48', B = e.band, SK = '#d89070';
+  if (!e.onGround && e.state !== 'dash' && e.knock <= 0) {   // front flip: tucked ball, rotated in 45-degree steps
+    const a = Math.round(e.spin / (Math.PI / 4)) * (Math.PI / 4) * f;
+    ctx.save(); ctx.translate(x, y - 12); ctx.rotate(a);
+    rimParts(0, 0, 1, [[-5, -5, 10, 10, G1], [-3, -8, 7, 4, G1]], fl);
+    if (!fl) detail(0, 0, 1, [[-1, -7, 4, 1, SK], [-5, -1, 10, 1, B], [-8, -2, 3, 1, B]]);
+    ctx.restore(); return;
+  }
+  const dash = e.state === 'dash', s = e.onGround && e.state === 'walk' ? Math.round(Math.sin(e.t * 0.4) * 2) : 0, lean = dash ? 2 : 0;
+  const L = [[-4 + s, -9, 3, 8, G1], [1 - s, -9, 3, 8, G1], [-5 + s, -2, 4, 2, G2], [1 - s, -2, 5, 2, G2],
+    [-4 + lean, -18, 9, 10, G1], [-6 + lean, -17, 3, 7, G1], [-3 + lean, -24, 7, 7, G1]];
+  if (e.state === 'throw' && e.st > -4) L.push([4 + lean, -17, 9, 3, G1]); else if (dash) L.push([4 + lean, -15, 11, 2, '#c8d0e0'], [4 + lean, -16, 3, 3, G1]); else L.push([4, -17, 3, 7, G1]);
+  if (dash && !fl) { ctx.globalAlpha = 0.3; for (const k of [1, 2]) parts(x - f * 8 * k, y, f, L, true); ctx.globalAlpha = 1; }
+  rimParts(x, y, f, L, fl);
+  if (!fl) {
+    const fl2 = (t >> 2) % 2;
+    detail(x, y, f, [[-1 + lean, -21, 6, 2, SK], [2 + lean, -21, 1, 1, '#ffffff'], [4 + lean, -21, 1, 1, '#ffffff'], [-3 + lean, -23, 7, 1, B], [-6 + lean, -23 + fl2, 3, 1, B], [-8 + lean, -22, 2, 1, B],
+      [-4 + lean, -11, 9, 2, B], [-7, -10 + fl2, 3, 1, B], [-1 + lean, -18, 1, 7, G2]]);
+    glow(x + f * 2, y - 21, 6, 'rgba(255,42,90,A)', 0.3);
+  }
+}
+function drawShot(s) {
+  const x = s.x, y = sy(s.y);
+  if (s.kind === 'bullet') { line(x, y, x - s.vx * 1.5, y - s.vy * 1.5, '#ffe23a', 1); rect(x - 1, y - 1, 2, 2, '#fff6c0'); glow(x, y, 5, 'rgba(255,226,58,A)', 0.5); return; }
+  if (s.kind === 'bottle') { const a = s.rot, cx = Math.cos(a) * 3, cy = Math.sin(a) * 3; line(x - cx, y - cy, x + cx, y + cy, '#0a0406', 3); line(x - cx, y - cy, x + cx, y + cy, '#3ac85a', 2); rect(x + cx - 1, y + cy - 1, 1, 1, '#bfffd0'); return; }
+  if (s.kind === 'shuriken') { glow(x, y, 7, 'rgba(42,240,255,A)', 0.45); for (let k = 0; k < 4; k++) { const a = s.rot + k * Math.PI / 2; line(x, y, x + Math.cos(a) * 4, y + Math.sin(a) * 4, '#e8eef4'); } rect(x - 1, y - 1, 2, 2, '#2a2a34'); return; }
+  line(x, y, x - s.vx * 2.5, y - s.vy * 2.5, s.col, 2); rect(x - 1, y - 1, 2, 2, '#fff'); glow(x, y, 7, 'rgba(255,40,20,A)', 0.5);
+}
 function drawBoss(b, t) {   // OMEGA SENTINEL: towering chrome skull-faced war machine with an arm cannon
   const x = Math.round(b.x), by = sy(b.y), fl = b.flash > 0, oy = Math.round(b.rise + (b.state === 'dying' ? Math.random() * 3 : 0));
   ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, by + 1); ctx.clip();
@@ -834,7 +1014,7 @@ function drawBoss(b, t) {   // OMEGA SENTINEL: towering chrome skull-faced war m
 }
 function drawEntities(t) {
   if (G.boss) drawBoss(G.boss, t);
-  for (const e of G.enemies) e.type === 'drone' ? drawDrone(e, t) : drawSentinel(e, t);
+  for (const e of G.enemies) e.def.draw(e, t);
   if (!P.dead && !(P.inv > 0 && P.hurtT === 0 && ((P.inv >> 2) & 1))) { const x = Math.round(P.x), y = sy(P.y); drawHero(P, x, y, t, P.hurtT > 10); drawDisc(P, x, y, t); }
   for (const p of G.parts) {
     const y = p.y - cam.y;
@@ -843,7 +1023,7 @@ function drawEntities(t) {
     rect(p.x, y, p.s, p.s, p.c);
   }
   for (const f of G.flashes) { const r = Math.round(f.r * (0.6 + f.t / 12)); glow(f.x, sy(f.y), r * 2, 'rgba(255,170,60,A)', 0.8 * (1 - f.t / 12)); if (f.t < 4) ellipse(f.x, sy(f.y), r / 2 | 0, r / 2 | 0, '#fff8d0'); }
-  for (const s of G.shots) { const x = s.x, y = sy(s.y); line(x, y, x - s.vx * 2.5, y - s.vy * 2.5, s.col, 2); rect(x - 1, y - 1, 2, 2, '#fff'); glow(x, y, 7, 'rgba(255,40,20,A)', 0.5); }
+  for (const s of G.shots) drawShot(s);
   for (const q of G.pops) { if (q.t > 50 && (q.t >> 2) & 1) continue; const w = textW(caps(q.text)) * q.sc; text(q.text, clamp(q.x, 20 + w / 2, W - 20 - w / 2), sy(q.y) - q.t * 0.4, q.col, q.sc, 'center', q.sc > 1 ? '#7a1a00' : '#000'); }
 }
 function wrap(s, n) { const out = []; let ln = ''; for (const w of s.split(' ')) { if ((ln + ' ' + w).trim().length > n) { out.push(ln.trim()); ln = w; } else ln += ' ' + w; } out.push(ln.trim()); return out; }
