@@ -1,4 +1,5 @@
-# Builds ../index.html from game.html. No music ships; to embed one, drop soundtrack.ogg (+ optional soundtrack.mp3) next to index.html
+# Builds ../index.html from game.html. The title theme (title-theme.ogg/.mp3) loads as separate files next to index.html.
+# No in-game music ships; to embed one, drop soundtrack.ogg (+ optional soundtrack.mp3) next to index.html
 # and run:  python3 build.py --embed-music
 import base64, pathlib, sys
 d = pathlib.Path(__file__).resolve().parent.parent

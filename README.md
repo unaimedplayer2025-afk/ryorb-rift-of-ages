@@ -10,11 +10,15 @@ RyOrb, a scarred cyborg warrior with a red mechanical arm and leg, climbs a towe
 - Arrows / WASD: move, Up/Down climb chains and cables
 - Z / J: throw the disc (hold Up for a high shot)
 - X / K / Space: jump
+- Any key / tap on the title: enable sound, then again to start
 - M: mute, P: pause
 - On-screen touch buttons on phones and tablets
 
-## Soundtrack hook
-No music ships. Set `window.SOUNDTRACK_URL` (and optionally `window.SOUNDTRACK_FALLBACK_URL`) before the game script, or drop `soundtrack.ogg`/`soundtrack.mp3` next to the page and run `python3 src/build.py --embed-music`.
+## Title theme
+The splash screen plays `title-theme.ogg` (with `title-theme.mp3` as the Safari/iOS fallback, picked with `canPlayType`), loaded as separate files. Browsers block autoplay, so the first key/tap enables audio and starts the theme; the next one starts the game. The theme loops on the title, fades out when play begins, and resumes when you return to the title. M / the mute button control it.
+
+## Soundtrack hook (in-game)
+Gameplay is SFX-only; no in-game music ships. Set `window.SOUNDTRACK_URL` (and optionally `window.SOUNDTRACK_FALLBACK_URL`) before the game script, or drop `soundtrack.ogg`/`soundtrack.mp3` next to the page and run `python3 src/build.py --embed-music`.
 
 ## Dev
 `src/game.html` is the source; `python3 src/build.py` writes `index.html`. `src/*.js` are Playwright smoke tests and the demo recorder.

@@ -29,6 +29,8 @@
 <!-- SOUNDTRACK HOOK: no music ships with this build. To add a soundtrack, put a tiny script here that sets
      window.SOUNDTRACK_URL = 'soundtrack.ogg' (and optionally window.SOUNDTRACK_FALLBACK_URL = 'soundtrack.mp3' for Safari/iOS).
      It starts on the first input, loops, ducks under SFX and obeys the mute toggle. build.py can also embed one as a data URI. -->
+<script>/* Title/splash theme: separate files next to index.html (not embedded). OGG first, MP3 fallback for Safari/iOS. */
+window.TITLE_THEME_URL = 'title-theme.ogg'; window.TITLE_THEME_FALLBACK_URL = 'title-theme.mp3';</script>
 <!--MUSIC-->
 <script>
 'use strict';
@@ -102,7 +104,7 @@ function text(s, x, y, c = '#fff', sc = 1, align = 'left', shadow = '#000') {
 
 // ---------- 2. AUDIO (procedural SFX + optional soundtrack hook) ----------
 const Snd = {
-  ac: null, master: null, music: null, muted: false, duck: 1, noiseBuf: null,
+  ac: null, master: null, music: null, title: null, titleVol: 0, unlocked: false, muted: false, duck: 1, noiseBuf: null,
   init() {
     if (!this.ac) {
       const AC = window.AudioContext || window.webkitAudioContext;
@@ -119,16 +121,42 @@ const Snd = {
       }
     }
     if (this.ac && this.ac.state === 'suspended') this.ac.resume();
-    this.playMusic();
+    this.unlocked = true;
+    if (mode === 'title') this.playTitle(); else this.playMusic();   // play() inside the user gesture unlocks the element
   },
-  playMusic() { if (this.music && this.music.paused && !this.muted) { const p = this.music.play(); if (p && p.catch) p.catch(() => {}); } },
+  makeTitle() {
+    if (this.title || !window.TITLE_THEME_URL) return;
+    const a = new Audio(); a.loop = true; a.preload = 'auto';
+    const ogg = a.canPlayType('audio/ogg; codecs="vorbis"') || a.canPlayType('audio/ogg; codecs="opus"');
+    a.src = (!ogg && window.TITLE_THEME_FALLBACK_URL) ? window.TITLE_THEME_FALLBACK_URL : window.TITLE_THEME_URL;
+    a.volume = 0; this.title = a;
+  },
+  playTitle() {
+    this.makeTitle();
+    if (this.title && this.title.paused && !this.muted && this.unlocked) { this.title.volume = this.titleVol; const p = this.title.play(); if (p && p.catch) p.catch(() => {}); }
+  },
+  playMusic() { if (mode === 'title') return; if (this.music && this.music.paused && !this.muted) { const p = this.music.play(); if (p && p.catch) p.catch(() => {}); } },
   toggleMute() {
     this.muted = !this.muted;
     if (this.master) this.master.gain.value = this.muted ? 0 : 0.45;
     if (this.music) { if (this.muted) this.music.pause(); else this.playMusic(); }
+    if (this.title) { if (this.muted) this.title.pause(); else if (mode === 'title') this.playTitle(); }
+    if (!this.muted && !this.unlocked) this.init();
     muteBtn.innerHTML = this.muted ? '&#128263;' : '&#128266;';
   },
-  update() { this.duck += (1 - this.duck) * 0.03; if (this.music) this.music.volume = clamp(0.55 * this.duck, 0, 1); },
+  update() {
+    this.duck += (1 - this.duck) * 0.03; if (this.music) this.music.volume = clamp(0.55 * this.duck, 0, 1);
+    // title theme: fade in on the title screen, fade out (~0.8s) and pause once gameplay starts
+    const onTitle = mode === 'title' && this.unlocked && !this.muted;
+    this.titleVol = onTitle ? Math.min(0.6, this.titleVol + 0.6 / 40) : Math.max(0, this.titleVol - 0.6 / 48);
+    if (this.title) {
+      if (onTitle && this.title.paused) this.playTitle();
+      this.title.volume = clamp(this.titleVol * (0.5 + 0.5 * this.duck), 0, 1);
+      if (!onTitle && this.titleVol <= 0 && !this.title.paused) this.title.pause();
+    }
+    if (this.music && mode !== 'title' && this.music.paused && !this.muted && this.unlocked) this.playMusic();
+    if (this.music && mode === 'title' && !this.music.paused) this.music.pause();
+  },
   tone(f, d, type = 'square', v = 0.15, f2 = 0, delay = 0) {
     if (!this.ac || this.muted) return; this.duck = Math.min(this.duck, 0.6);
     const t = this.ac.currentTime + delay, o = this.ac.createOscillator(), g = this.ac.createGain();
@@ -168,7 +196,9 @@ const SFX = {
 const keys = {}, pressed = {};
 const KEYMAP = { ArrowLeft:'left', KeyA:'left', ArrowRight:'right', KeyD:'right', ArrowUp:'up', KeyW:'up', ArrowDown:'down', KeyS:'down',
   KeyZ:'atk', KeyJ:'atk', KeyX:'jump', KeyK:'jump', Space:'jump', Enter:'start', KeyM:'mute', KeyP:'pause', Escape:'pause' };
-addEventListener('keydown', e => { const a = KEYMAP[e.code]; if (!a) return; e.preventDefault(); if (a !== 'mute') Snd.init(); if (!keys[a]) pressed[a] = true; keys[a] = true; });
+addEventListener('keydown', e => { const a = KEYMAP[e.code];
+  if (a !== 'mute' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) { pressed.any = true; Snd.init(); }
+  if (!a) return; e.preventDefault(); if (!keys[a]) pressed[a] = true; keys[a] = true; });
 addEventListener('keyup', e => { const a = KEYMAP[e.code]; if (a) keys[a] = false; });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 const muteBtn = document.getElementById('mute');
@@ -176,11 +206,11 @@ muteBtn.addEventListener('pointerdown', e => { e.stopPropagation(); e.preventDef
 if ('ontouchstart' in window || navigator.maxTouchPoints > 0) document.body.classList.add('touch');
 document.querySelectorAll('.tb').forEach(b => {
   const a = b.dataset.a;
-  const on = e => { e.preventDefault(); Snd.init(); if (!keys[a]) pressed[a] = true; keys[a] = true; b.classList.add('on'); if (mode !== 'play') pressed.start = true; };
+  const on = e => { e.preventDefault(); Snd.init(); if (!keys[a]) pressed[a] = true; keys[a] = true; b.classList.add('on'); pressed.any = true; if (mode !== 'play') pressed.start = true; };
   const off = e => { e.preventDefault(); keys[a] = false; b.classList.remove('on'); };
   b.addEventListener('pointerdown', on); b.addEventListener('pointerup', off); b.addEventListener('pointercancel', off); b.addEventListener('pointerleave', off);
 });
-cv.addEventListener('pointerdown', () => { Snd.init(); if (mode !== 'play') pressed.start = true; });
+cv.addEventListener('pointerdown', () => { Snd.init(); pressed.any = true; if (mode !== 'play') pressed.start = true; });
 function readInput() {
   if (DEMO && mode === 'play') return aiInput();
   return { left: keys.left, right: keys.right, up: keys.up, down: keys.down, atk: keys.atk, jump: keys.jump, atkP: pressed.atk, jumpP: pressed.jump };
@@ -290,6 +320,7 @@ const TITLEBG = mk(W, H, (g, r) => { // black and red storm clouds
 }, 41);
 const STARS = (() => { const r = seeded(11), a = []; for (let i = 0; i < 60; i++) a.push([r() * W | 0, r() * 100 | 0, r() < 0.2]); return a; })();
 // ---------- 5. GAME STATE ----------
+let titleArmed = false, titleArmT = 0;   // titleArmed: audio has been enabled by a first input
 let mode = 'title', titleT = 0, paused = false, G = null, P = null;
 const cam = { y: 0 };
 const NAMES = { drone: 'HUNTER DRONE', sentinel: 'SENTINEL UNIT' };
@@ -562,9 +593,15 @@ function updateParticles() {
 // --- master update ---
 function update(I) {
   if (pressed.mute) Snd.toggleMute();
-  if (mode === 'title') { titleT++; if (pressed.start || pressed.atk || pressed.jump || (DEMO && titleT > 150)) { newGame(); mode = 'play'; SFX.start(); } return; }
+  if (mode === 'title') {
+    titleT++;
+    const hit = pressed.any || pressed.start || pressed.atk || pressed.jump;
+    if (hit && !titleArmed) { titleArmed = true; titleArmT = titleT; }          // first input: audio unlocked, theme starts
+    else if ((hit && titleT - titleArmT > 20) || (DEMO && titleT > 150)) { newGame(); mode = 'play'; SFX.start(); }
+    return;
+  }
   G.t++;
-  if (mode === 'gameover' || mode === 'clear') { G.stateT++; updateParticles(); G.shake *= 0.85; if (G.stateT > 60 && (pressed.start || pressed.atk || pressed.jump)) { mode = 'title'; titleT = 0; } return; }
+  if (mode === 'gameover' || mode === 'clear') { G.stateT++; updateParticles(); G.shake *= 0.85; if (G.stateT > 60 && (pressed.start || pressed.atk || pressed.jump)) { mode = 'title'; titleT = 0; titleArmT = 0; } return; }
   if (pressed.pause) paused = !paused;
   if (paused) return;
   if (G.hitstop > 0) { G.hitstop--; return; }
@@ -876,7 +913,8 @@ function render() {
     ctx.globalAlpha = 0.5; text(HERO, W / 2, 8, '#ffd0c0', 6, 'center', null); ctx.globalAlpha = 1; text(HERO, W / 2, 9, '#ff2a1a', 6, 'center', null);
     text('RIFT OF AGES', W / 2, 42, '#e8eef4', 2, 'center', '#300');
     text('1985', W / 2 - 34, 58, '#ff2ad4', 1, 'center'); text('//', W / 2, 58, '#888', 1, 'center'); text('2098', W / 2 + 34, 58, '#ff3a2a', 1, 'center');
-    if ((titleT >> 5) & 1) text('PRESS Z OR TAP TO START', W / 2, 160, '#fff', 1, 'center', '#800');
+    { const pulse = 0.55 + 0.45 * Math.sin(titleT * 0.12); ctx.globalAlpha = pulse;
+      text(titleArmed ? 'PRESS ANY KEY / TAP TO PLAY' : 'PRESS ANY KEY / TAP TO START', W / 2, 160, titleArmed ? '#ffe23a' : '#fff', 1, 'center', '#800'); ctx.globalAlpha = 1; }
     text('ARROWS/WASD MOVE+CLIMB  Z/J DISC  X/K/SPACE JUMP  M MUTE', W / 2, 171, '#c8a8a0', 1, 'center');
     return;
   }
@@ -893,6 +931,7 @@ function render() {
 
 // ---------- 7. MAIN LOOP (fixed 60Hz step) ----------
 let last = performance.now(), acc = 0;
+Snd.makeTitle();   // start buffering the title theme (separate file) right away
 function step() { const I = readInput(); update(I); for (const k in pressed) pressed[k] = false; Snd.update(); }
 function frame(now) { acc += Math.min(100, now - last); last = now; while (acc >= 1000 / 60) { step(); acc -= 1000 / 60; } render(); requestAnimationFrame(frame); }
 window.__game = { step: () => step(), get mode() { return mode; }, get G() { return G; }, get P() { return P; }, LEVEL };   // test hook
